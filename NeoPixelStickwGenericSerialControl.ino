@@ -65,8 +65,8 @@ byte ContLoopIteration = 0;
 byte Diagnostic = 1;                // switches on all kinds of diagnostic feedback from various locations in the program
 byte LooptimeDiag = 1;              // minimal feedback for checking efficiency: only feeds back looptime
 int ArrayDiag = 1;                 // if switched on, prints all arrays every cycle
-unsigned long Slowdown = 3;                  // Delay value (ms) added to each loop, only in 'Diagnostic' mode to allow inspecting the data coming back over serial
-unsigned long msTable[8] = {0, 100, 200, 500, 1000, 1500, 2000, 5000}; //Delay values in ms to 'Slow Down' program for diagnostic purposes
+unsigned long Slowdown = 500;                  // Delay value (ms) added to each loop, only in 'Diagnostic' mode to allow inspecting the data coming back over serial
+unsigned long msTable[10] = {0, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000}; //Delay values in ms to 'Slow Down' program for diagnostic purposes
 byte LoopIteration = 0;             // to track loop iterations
 
 // SERIAL- required for the core functionality of the Serial communication
@@ -85,8 +85,11 @@ int STATE13[nLEDs * 3] = {0, 0, 100, 0, 0, 100, 0, 0, 100, 0, 0, 100, 0, 0, 100,
 int STATE14[nLEDs * 3] = {100, 0, 100, 100, 0, 100, 100, 0, 100, 100, 0, 100, 100, 0, 100, 100, 0, 100, 100, 0, 100, 100, 0, 100,}; //
 
 void setup() {
-  // initialize serial communication:
-  Serial.begin(9600);
+  // initialize serial communication at 115200 bits per second:
+  Serial.begin(115200);
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for Leonardo only
+  }
   pinMode(ArduinoLedPin, OUTPUT);
   strip.begin();
   strip.show(); // Initialize all pixels to 'off'
@@ -96,7 +99,7 @@ void setup() {
 
 
 //**********************************************************
-//*************         M A I N       **********************
+//  *************         M A I N       **********************
 //**********************************************************
 
 void loop()
@@ -106,6 +109,9 @@ void loop()
   currentMillis = millis();
   ++LoopIteration;
   LoopBlink(LoopIteration);
+
+
+  delay(1); /////REMOVE THIS LINE WHEN MORE CODE ADDED!!: somehow the serial communication deosn't work well if there is no slight delay
 
 
   if (Diagnostic == 1) {                  //Diag
@@ -139,18 +145,18 @@ void loop()
       if (Diagnostic == 1) {                    //Diag
         Serial.println(F("[ Entered reading section, ergo >=3 Bytes in buffer, first is 255"));
       }                                        //Diag
-      byte PrevMode = Mode;//If the read data turns out to be invalid, the previous Mode is saved here, and restored at the end of the read loop
+      byte TempMode = Mode;//If the read data turns out to be valid, we'll make  Mode=TempMode. let's see first if it passes the tests
 
-      Mode = Serial.read();
+      TempMode = Serial.read();
       DataLength = Serial.read();
       BytesInBuffer = Serial.available();
 
       if (Diagnostic == 1) {                     //Diag
-        Serial.print(F("[ Mode: "));             //Diag
-        Serial.print(Mode);                      //Diag
-        Serial.print(F(" // New ContMode: "));   //Diag
+        Serial.print(F("[ Received Mode Byte: "));             //Diag
+        Serial.print(TempMode);                      //Diag
+        Serial.print(F(" // Current ContMode: "));   //Diag
         Serial.print(ContMode);                  //Diag
-        Serial.print(F(" // New OnceMode: "));   //Diag
+        Serial.print(F(" // Current OnceMode: "));   //Diag
         Serial.println(OnceMode);                //Diag
         Serial.print(F("[ DataLength: "));       //Diag
         Serial.print(DataLength);                //Diag
@@ -158,8 +164,8 @@ void loop()
         Serial.println(BytesInBuffer);           //Diag
       }                                          //Diag
 
-      //NOT ENOUGH BYTES
-      if (BytesInBuffer < DataLength) {
+      //RIGHT AMOUNT, OR NOT ENOUGH BYTES
+      if (BytesInBuffer <= DataLength) {
         if (Diagnostic == 1) {
           Serial.println("[ Entering 'NOT ENOUGH BYTES");
         }
@@ -168,7 +174,13 @@ void loop()
 
         while ( (BytesInBuffer < DataLength) && (WaitedForBytes < CommsTimeout )) {
           // **** THIS IS THE **WAIT-FOR-BYTES** LOOP, WAITING FOR 'DataLength' BYTES TO ARRIVE FROM SERIAL PORT ***
-          BytesInBuffer = Serial.available();
+
+          while (0 < 1) {
+            BytesInBuffer = Serial.available();
+            delay(200);
+            Serial.print(F("=> BytesInBuffer: "));    //Diag
+            Serial.println (BytesInBuffer);           //Diag
+          }
 
           if (Diagnostic == 1) {                      //Diag
             Serial.print(F("[ DataLength: "));        //Diag
@@ -183,23 +195,25 @@ void loop()
           WaitedForBytes = (millis() - StartMillis);
         }/// End of **WAIT-FOR-BYTES** loop. Now there are 2 options: either the bytes arrived, or they didn't and the thing timed out
 
-        if (BytesInBuffer == DataLength) {
+        if (BytesInBuffer == DataLength) { // Option1: the right amount has arrived
           if (Diagnostic == 1) {                                 //Diag
             Serial.print(F("[ Bytes arrived after waiting for ")); //Diag
             Serial.print(WaitedForBytes);                        //Diag
             Serial.println(F("ms"));                                //Diag
           }                                                      //Diag
+          Mode = TempMode; // valid data, Mode can be set
+          SetMode(Mode);
         }
 
-        if (BytesInBuffer < DataLength) {
+        if (BytesInBuffer < DataLength) { // Option1: the right amount has NOT arrived and the wait-loop timed out after 'CommsTimeout' ms
           Serial.print("[ ERROR: Missing ");
           Serial.print(DataLength - BytesInBuffer);
           Serial.print("Bytes in buffer, Waited ");
           Serial.print(WaitedForBytes);
-          Serial.println("ms, Aborting read operation, dumping data");
+          Serial.println("ms, Aborting read operation, dumping data, reverting to previous mode");
           char dump[BytesInBuffer];
           Serial.readBytes(dump, BytesInBuffer);
-          Mode = PrevMode; //restoring the previous modes so operation continues unchanged despite the invalid data
+          //No change to 'Mode' - program keeps running in the existing mode
         }
 
       } // End of 'not enough Bytes'
@@ -214,25 +228,24 @@ void loop()
         Serial.println(" too many Bytes in buffer. Dumping all data, not doing anything");
         char dump[BytesInBuffer];
         Serial.readBytes(dump, BytesInBuffer);
-        Mode = PrevMode; //restoring the previous modes so operation continues unchanged despite the invalid data
+        //No change to 'Mode' - program keeps running in the existing mode
       }
 
     }
-    else // IF 3 bytes or more AND the first is not '255'; cycle back to start without doing anything with the read Byte:
-      // effectively this just removes the first Byte, and leaves the remaining in the buffer
+    else // IF 3 bytes or more AND the first is NOT '255'; cycle back to start without doing anything with the read Byte:
+      // effectively this just removes the first Byte, and leaves the remaining in the buffer, so the next one can be evaluated
     {
       ++DiscardedBytes;
       Serial.print("[ ERROR: Bytes received not starting with '255' Discarded: ");
       Serial.println(DiscardedBytes);
-    } //End invalid data section (ie data did not start with '255' and is non-255 byte is discarded. The rest is left intact in case it is the start of a valid message)
-    SetMode(Mode);
+    } //End invalid data section (ie data did not start with '255' and is non-255 byte is discarded. The rest is left intact in case it is the start of a valid message
 
   } // End reading / discarding data section which only runs when there are 3 Bytes or ore in the buffer
 
 
   ////// BRIDGE section, between validating the incoming data, and reading in the data (if valid)
   if (Diagnostic == 1) {                    //Diag
-    Serial.print("[ Last read Mode: ");     //Diag
+    Serial.print("[ Last set Mode: ");     //Diag
     Serial.print(Mode);                     //Diag
     Serial.print(" // Current ContMode: "); //Diag
     Serial.print(ContMode);                 //Diag
@@ -353,7 +366,7 @@ void loop()
   }
   if (Diagnostic == 1) {
     Serial.print("[ **** END OF LOOP ");
-    Serial.print(LoopIteration);
+    Serial.println(LoopIteration);
   }
 
   currentMillis = millis();
@@ -497,7 +510,12 @@ void SetDiagnostic() //Mode 99 is CONFIG. Bytes set: Diagnostic, Delay
   Serial.println("[ Entering Diagnostic change");
   Diagnostic = Serial.read();
   int i = Serial.read();
-  Slowdown = msTable[i];
+  if (i < 10) {
+    Slowdown = msTable[i];
+  }
+  else
+  { Serial.print("[ ERROR: Slowdown value > 9");
+  }
   LooptimeDiag = Serial.read();
   ArrayDiag = Serial.read();
   CommsTimeout = msTable[Serial.read()];
